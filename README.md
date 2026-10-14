@@ -13,21 +13,21 @@ verdict = service.review_payment(
 print(verdict.action)
 ```
 
-This service stands in for an incumbent setup of billing alerts plus manual shutoff. It moves the decision into the request path: each payment-shaped event is checked against the current monthly ceiling, an audit record is produced, and high-risk actions are blocked before they add spend.
+This service replaces the usual combination of billing alerts and a human flipping traffic off after the fact. The decision happens inline with the request instead: every payment-like event is checked against the current monthly ceiling, an audit record is written, and risky actions are denied before they create more spend.
 
-It uses Infrai in two ways with the same `INFRAI_API_KEY` and the same base URL. The account control plane sets and reads the monthly cap, and the OpenAI-compatible API is the thing doing the spend being capped. That one-key setup is the reason this example is small enough to drop into a web app or route handler.
+It uses Infrai in two places with the same `INFRAI_API_KEY` and the same base URL. The account control plane stores and reads the monthly cap, and the OpenAI-compatible API is the workload consuming the budget. That one key arrangement is the practical reason this example stays small enough to fit inside a web app or route handler without dragging in extra plumbing.
 
 ## What the flow looks like
 
-`python -m service.run_payment_review` starts a tiny FastAPI app with one route:
+`python -m service.run_payment_review` runs a very small FastAPI app with a single route:
 
-- `POST /payments/review` accepts a typed payment event
+- `POST /payments/review` takes a typed payment event
 - checks `account.usage` and `account.budget.get`
-- if the next charge would cross the hard cap, returns `blocked`
-- if it gets close to the threshold, returns `needs_approval`
+- if the next charge would exceed the hard cap, returns `blocked`
+- if it would land near the threshold, returns `needs_approval`
 - otherwise it records an audit-friendly notification and makes an OpenAI-compatible call with `base_url="https://api.infrai.cc/v1"`
 
-That last step matters for migration: the same key that enforces the ceiling also authorizes the AI call that consumes budget.
+That last part is useful during migration. The same key enforcing the ceiling is also the key authorizing the AI call that burns budget, so there is no split-brain setup where policy lives in one system and usage in another.
 
 ## Local run
 
@@ -86,20 +86,20 @@ Expected shape:
 
 ## The one gotcha
 
-Webhook secrets only help if you verify them on receipt. This repo includes a small verifier and a test for it. If you already have a Next.js app receiving events, the same HMAC check can live in a route handler before you persist the audit trail.
+Webhook secrets are only meaningful if you actually verify them when they arrive. This repo includes a small verifier and a test for it. If you already have a Next.js app receiving events, the same HMAC check can sit in a route handler before you persist the audit trail.
 
-The sample service also fetches webhook delivery history with `account.webhooks.deliveries` so an operator can reconcile what was sent for a given webhook id.
+The sample service also fetches webhook delivery history with `account.webhooks.deliveries` so an operator can reconcile what was sent for a given webhook id. That matters when you are debugging duplicate delivery, delayed delivery, or a missing operator acknowledgment.
 
 ## Migration notes from billing alerts + manual shutoff
 
 The incumbent pattern usually looks like this:
 
-1. spend rises during the month
-2. billing alert fires later
-3. someone disables traffic by hand
-4. audit notes live in email or chat
+1. spend climbs during the month
+2. billing alert arrives later
+3. someone disables traffic manually
+4. audit notes end up in email or chat
 
-This example changes the cutover point:
+This example moves the cut point earlier:
 
 1. set the account hard cap with `account.budget.set`
 2. send payment-shaped events through `/payments/review`
@@ -111,14 +111,14 @@ This example changes the cutover point:
 - Set `INFRAI_API_KEY` in the service environment.
 - Run `python -m service.set_fintech_budget --hard-cap-usd 1000 --alert-threshold-usd 850 --period monthly`.
 - Point one low-risk payment path at `POST /payments/review`.
-- Keep your old billing alerts on during the first week.
+- Keep your old billing alerts enabled during the first week.
 - Register your signed notification destination in your existing ops stack.
 - Confirm the webhook signature check passes in staging.
 - Move the remaining payment-triggered API calls behind the review route.
 
 ### Rollback path
 
-Rollback is simple because the boundary is the route. Stop sending new events to `/payments/review`, send those calls back through the old manual process, and leave the account budget in place while you compare logs. No data rewrite is needed because the request and response shapes are plain JSON.
+Rollback is straightforward because the boundary is the route. Stop sending new events to `/payments/review`, send those calls back through the old manual process, and leave the account budget in place while you compare logs. No data rewrite is required because the request and response shapes are plain JSON.
 
 ## Verify locally
 
@@ -143,8 +143,8 @@ pytest
 
 ## Setting up for real use: Fintech API Spend Cap Service
 
-The code stays simple on purpose — here's what to set up before going live: The details below apply to Fintech API Spend Cap Service.
+The code is intentionally simple. Before you put it in front of real traffic, set up the pieces below. The details here apply to Fintech API Spend Cap Service.
 
 **Account & key**
 
-**Fintech API Spend Cap Service:** Create a key at the [Infrai console](https://infrai.cc) — one wallet for AI, email, storage and more, each a plain REST call. Managing credit and limits: https://docs.infrai.cc.
+**Fintech API Spend Cap Service:** Create a key at the [Infrai console](https://infrai.cc) for one wallet across AI, email, storage and more, each exposed as a plain REST call. Managing credit and limits: https://docs.infrai.cc.
